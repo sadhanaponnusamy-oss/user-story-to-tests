@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import { generateTests } from './api'
-import { GenerateRequest, GenerateResponse, TestCase } from './types'
+import React, { useState } from 'react'
+import { generateTests, jiraConnect, fetchJiraStories, fetchJiraStoryDetail } from './api'
+import { GenerateRequest, GenerateResponse, TestCase, JiraCredentials, JiraStory, JiraStoryDetail } from './types'
 import { DownloadButtons } from './components/DownloadButtons'
 
 function App() {
@@ -15,6 +15,15 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [expandedTestCases, setExpandedTestCases] = useState<Set<string>>(new Set())
 
+  // Jira integration state
+  const [jiraModalOpen, setJiraModalOpen] = useState<boolean>(false)
+  const [jiraCreds, setJiraCreds] = useState<JiraCredentials | null>(null)
+  const [jiraStories, setJiraStories] = useState<JiraStory[]>([])
+  const [selectedStoryKey, setSelectedStoryKey] = useState<string>('')
+  const [storyDetails, setStoryDetails] = useState<JiraStoryDetail | null>(null)
+  const [jiraLoading, setJiraLoading] = useState<boolean>(false)
+  const [jiraError, setJiraError] = useState<string | null>(null)
+
   const toggleTestCaseExpansion = (testCaseId: string) => {
     const newExpanded = new Set(expandedTestCases)
     if (newExpanded.has(testCaseId)) {
@@ -27,6 +36,53 @@ function App() {
 
   const handleInputChange = (field: keyof GenerateRequest, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }))
+  }
+
+  // Jira handlers
+  const openJiraModal = () => {
+    setJiraModalOpen(true)
+    setJiraError(null)
+  }
+  const closeJiraModal = () => {
+    setJiraModalOpen(false)
+  }
+
+  const handleJiraSubmit = async (creds: JiraCredentials) => {
+    setJiraLoading(true)
+    setJiraError(null)
+    try {
+      await jiraConnect(creds)
+      setJiraCreds(creds)
+      const stories = await fetchJiraStories(creds)
+      setJiraStories(stories)
+    } catch (err) {
+      setJiraError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setJiraLoading(false)
+    }
+  }
+
+  const handleSelectStory = (key: string) => {
+    setSelectedStoryKey(key)
+  }
+
+  const handleLinkStory = async () => {
+    if (!jiraCreds || !selectedStoryKey) return
+    setJiraLoading(true)
+    try {
+      const detail = await fetchJiraStoryDetail(jiraCreds, selectedStoryKey)
+      setStoryDetails(detail)
+      setFormData(prev => ({
+        ...prev,
+        storyTitle: detail.title,
+        description: detail.description || '',
+        acceptanceCriteria: detail.acceptanceCriteria || ''
+      }))
+    } catch (err) {
+      setJiraError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setJiraLoading(false)
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -109,6 +165,54 @@ function App() {
         .subtitle {
           color: #666;
           font-size: 1.1rem;
+        }
+        /* Jira modal styling */
+        .modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0,0,0,0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1000;
+        }
+        .modal {
+          background: white;
+          padding: 20px;
+          border-radius: 8px;
+          max-width: 500px;
+          width: 90%;
+          box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+          position: relative;
+        }
+        .modal-header {
+          font-size: 1.25rem;
+          margin-bottom: 10px;
+        }
+        .modal-close {
+          position: absolute;
+          top: 10px;
+          right: 10px;
+          cursor: pointer;
+          font-size: 18px;
+        }
+        .modal-input {
+          width: 100%;
+          padding: 8px;
+          margin-bottom: 10px;
+          border: 1px solid #ccc;
+          border-radius: 4px;
+        }
+        .modal-button {
+          background: #3498db;
+          color: white;
+          padding: 10px 20px;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
         }
         
         .form-container {
@@ -337,11 +441,97 @@ function App() {
       `}</style>
       
       <div className="container">
+        {/* Jira connection modal */}
+        {jiraModalOpen && (
+          <div className="modal-overlay">
+            <div className="modal">
+              <div className="modal-header">
+                <span>Connect to Jira</span>
+                <span className="modal-close" onClick={closeJiraModal}>×</span>
+              </div>
+              <div>
+                <input
+                  className="modal-input"
+                  placeholder="Base URL"
+                  value={jiraCreds?.baseUrl || ''}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setJiraCreds(prev => ({ ...(prev || { baseUrl: '', email: '', apiToken: '' }), baseUrl: e.target.value }))}
+                />
+                <input
+                  className="modal-input"
+                  placeholder="Email"
+                  value={jiraCreds?.email || ''}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setJiraCreds(prev => ({ ...(prev || { baseUrl: '', email: '', apiToken: '' }), email: e.target.value }))}
+                />
+                <input
+                  className="modal-input"
+                  placeholder="API Token"
+                  type="password"
+                  value={jiraCreds?.apiToken || ''}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setJiraCreds(prev => ({ ...(prev || { baseUrl: '', email: '', apiToken: '' }), apiToken: e.target.value }))}
+                />
+                {jiraError && <p style={{ color: 'red' }}>{jiraError}</p>}
+                <button className="modal-button" onClick={() => jiraCreds && handleJiraSubmit(jiraCreds)} disabled={jiraLoading}>
+                  {jiraLoading ? 'Connecting...' : 'Connect'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="header">
           <h1 className="title">User Story to Tests</h1>
           <p className="subtitle">Generate comprehensive test cases from your user stories</p>
         </div>
-        
+
+        {/* connect button */}
+        <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+          <button
+            type="button"
+            className="submit-btn"
+            onClick={openJiraModal}
+            disabled={jiraLoading}
+          >
+            {jiraLoading ? 'Please wait...' : 'Connect Jira'}
+          </button>
+        </div>
+
+        {/* story selector */}
+        {jiraCreds && jiraStories.length > 0 && (
+          <div className="form-group">
+            <label className="form-label">Jira Stories</label>
+            <select
+              className="form-input"
+              value={selectedStoryKey}
+              onChange={(e) => handleSelectStory(e.target.value)}
+            >
+              <option value="">-- select story --</option>
+              {jiraStories.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.key} - {s.summary}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="submit-btn"
+              onClick={handleLinkStory}
+              disabled={!selectedStoryKey || jiraLoading}
+              style={{ marginTop: '10px' }}
+            >
+              {jiraLoading ? 'Loading...' : 'Link Story'}
+            </button>
+          </div>
+        )}
+
+        {storyDetails && (
+          <div className="form-container" style={{ marginBottom: '20px' }}>
+            <h3>Selected Jira Story</h3>
+            <p><strong>Title:</strong> {storyDetails.title}</p>
+            <p><strong>Description:</strong> {storyDetails.description || 'N/A'}</p>
+            <p><strong>Acceptance Criteria:</strong> {storyDetails.acceptanceCriteria || 'N/A'}</p>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="form-container">
           <div className="form-group">
             <label htmlFor="storyTitle" className="form-label">

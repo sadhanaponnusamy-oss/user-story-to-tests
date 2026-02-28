@@ -20,3 +20,22 @@ export interface GenerateResponse {
   promptTokens: number
   completionTokens: number
 }
+
+// Jira integration types
+export interface JiraCredentials {
+  baseUrl: string
+  email: string
+  apiToken: string
+}
+
+export interface JiraStory {
+  key: string
+  summary: string
+}
+
+export interface JiraStoryDetail {
+  key: string
+  title: string
+  description?: string
+  acceptanceCriteria?: string
+}
